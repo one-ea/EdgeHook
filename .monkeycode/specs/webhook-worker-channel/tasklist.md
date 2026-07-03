@@ -1,0 +1,156 @@
+# 需求实施计划
+
+- [x] 1. 创建 Cloudflare Workers TypeScript 项目骨架
+  - [x] 1.1 添加项目基础配置文件
+    - 创建 `package.json`、`tsconfig.json`、`wrangler.toml` 和 Worker 源码目录
+    - 在 `wrangler.toml` 中声明 Worker 入口、Cloudflare Queue producer 绑定和 consumer 配置
+    - 覆盖设计文档 Implementation Plan 1 和 Requirements 6.1、6.2、6.3、6.4
+  - [x] 1.2 定义核心运行时类型
+    - 创建 Worker `Env`、`NotificationEvent`、`DeliveryAttempt`、错误响应和下游目标配置类型
+    - 确保类型覆盖 request identifier、producer identity、event type、payload、metadata 和 received timestamp
+    - 覆盖 Requirements 1.4、4.1、4.2、5.1、5.2
+  - [ ]* 1.3 添加测试运行基础设施
+    - 配置 Vitest 或 Cloudflare Workers 兼容测试环境
+    - 添加测试 fixture 和 mock queue 工具
+    - 覆盖设计文档 Test Strategy 的 Worker handler 和 Queue publishing 测试准备
+
+- [x] 2. 实现 webhook 入口和错误响应基础能力
+  - [x] 2.1 实现 Worker fetch 入口
+    - 接收 HTTP 请求并生成稳定 request identifier
+    - 只允许 POST webhook 请求，其他方法返回 HTTP 405 和 allowed-methods indicator
+    - 在所有响应中返回 request identifier header
+    - 覆盖 Requirements 1.1、1.2、5.4
+  - [x] 2.2 实现结构化 JSON 响应和稳定错误码
+    - 创建统一成功响应和错误响应 helper
+    - 实现 `WEBHOOK_METHOD_NOT_ALLOWED`、`WEBHOOK_CONFIG_MISSING`、`WEBHOOK_QUEUE_UNAVAILABLE` 等错误响应
+    - 覆盖 Requirements 1.2、2.4、5.3、6.4
+  - [ ]* 2.3 编写入口和错误响应单元测试
+    - 测试非 POST 请求返回 HTTP 405
+    - 测试响应体和响应头包含 request identifier
+    - 测试错误响应格式稳定
+    - 覆盖设计文档 Correctness Properties: Every HTTP response includes the request identifier used in logs
+
+- [x] 3. 实现 HMAC-SHA256 webhook 认证
+  - [x] 3.1 实现 raw body 读取和签名输入构造
+    - 从请求中读取 raw body 字符串并保留给后续 JSON 解析
+    - 使用 `timestamp + "." + rawBody` 构造签名输入
+    - 覆盖设计文档 Correctness Properties: HMAC signatures are calculated over the raw request body before JSON parsing
+  - [x] 3.2 实现 HMAC-SHA256 签名校验
+    - 读取 `X-Webhook-Timestamp`、`X-Webhook-Signature` 和 `X-Webhook-Id` 请求头
+    - 使用 Cloudflare Web Crypto APIs 校验签名
+    - 认证失败返回 HTTP 401 和 `WEBHOOK_INVALID_SIGNATURE`
+    - 覆盖 Requirements 2.1、2.2、2.3
+  - [x] 3.3 实现时间窗口和密钥配置校验
+    - 校验 timestamp 在 5 分钟接受窗口内
+    - 密钥配置缺失时返回 HTTP 500 和 `WEBHOOK_CONFIG_MISSING`
+    - timestamp 过期时返回 HTTP 401 和 `WEBHOOK_SIGNATURE_EXPIRED`
+    - 覆盖 Requirements 2.4、2.5、6.1
+  - [ ]* 3.4 编写 HMAC 认证单元测试
+    - 测试有效签名、无效签名、过期 timestamp 和缺失密钥
+    - 测试 raw body 在 JSON 解析前参与签名
+    - 覆盖设计文档 Test Strategy 的 HMAC signature validation
+  - [ ]* 3.5 编写 HMAC 属性测试
+    - 属性 P1：任意 raw body 内容变化都会改变签名校验结果
+    - 属性 P2：任意有效签名在时间窗口外都会被拒绝
+    - 覆盖 Requirements 2.1、2.5 和 Correctness Properties 的签名原文约束
+
+- [x] 4. 实现 payload 解析、验证和事件标准化
+  - [x] 4.1 实现 JSON payload parser
+    - 从已读取的 raw body 解析 JSON
+    - JSON 解析失败返回 HTTP 400 和 `WEBHOOK_INVALID_JSON`
+    - 覆盖 Requirements 1.1、1.3
+  - [x] 4.2 实现 payload 字段验证
+    - 校验必填字段并返回 HTTP 422 和 field-level validation errors
+    - 支持配置 event type 字段和 metadata 字段映射
+    - 覆盖 Requirements 3.1、3.3、3.4
+  - [x] 4.3 实现 Notification Event 标准化
+    - 生成 event identifier、source、type、payload、metadata 和 receivedAt
+    - 在缺失 event type 时应用默认 event type
+    - 将认证后的 producer identity 写入事件
+    - 覆盖 Requirements 1.4、2.3、3.1、3.2、3.3
+  - [ ]* 4.4 编写解析、验证和标准化单元测试
+    - 测试合法 JSON、非法 JSON、缺失字段、默认 event type 和 metadata 映射
+    - 覆盖设计文档 Test Strategy 的 JSON parsing、payload validation 和 event normalization
+  - [ ]* 4.5 编写事件标准化属性测试
+    - 属性 P3：任意被接受请求都会生成一个非空 Notification Event identifier
+    - 属性 P4：任意被接受请求的 Notification Event 都包含 request identifier
+    - 覆盖 Requirements 1.4 和 Correctness Properties: Every accepted webhook request creates exactly one Notification Event identifier
+
+- [x] 5. 检查点 - 确保所有测试通过
+  - 确保所有测试通过,如有疑问请询问用户
+
+- [x] 6. 实现 Cloudflare Queue 入队
+  - [x] 6.1 实现 Queue producer 适配器
+    - 从 Worker Env 读取 Cloudflare Queue binding
+    - 将 Notification Event 入队
+    - 入队成功后返回 HTTP 202 Accepted
+    - 覆盖 Requirements 4.1、6.2 和 Correctness Properties: Accepted webhook requests are acknowledged after successful enqueue to Cloudflare Queue
+  - [x] 6.2 实现入队失败处理
+    - Queue binding 缺失返回 HTTP 500 和 `WEBHOOK_CONFIG_MISSING`
+    - Queue send 失败返回 HTTP 503 和 `WEBHOOK_QUEUE_UNAVAILABLE`
+    - 记录结构化错误日志
+    - 覆盖 Requirements 5.1、5.3、6.4
+  - [ ]* 6.3 编写 Queue 入队集成测试
+    - 测试合法 webhook 请求成功入队
+    - 测试入队消息保留 request identifier 和 event identifier
+    - 覆盖设计文档 Test Strategy 的 Cloudflare Queue publishing
+
+- [x] 7. 实现 Queue consumer 下游 HTTP 投递
+  - [x] 7.1 实现 Queue consumer 入口
+    - 从 Cloudflare Queue batch 中读取 Notification Event
+    - 为每个事件创建 Delivery Attempt 记录
+    - 覆盖 Requirements 4.2、5.2
+  - [x] 7.2 实现通用 HTTP endpoint 投递
+    - 使用 HTTP POST JSON body 调用下游目标 URL
+    - 设置基础 headers 并传递 request identifier
+    - 覆盖 Requirements 4.5、6.3
+  - [x] 7.3 实现投递结果分类和重试控制
+    - 将 HTTP 2xx 归类为成功
+    - 将 HTTP 408、429、5xx 归类为临时失败并触发重试
+    - 将 HTTP 400、401、403、404、422 归类为终态失败
+    - 将最大重试次数限制为 5 次
+    - 覆盖 Requirements 4.2、4.3、4.4
+  - [ ]* 7.4 编写投递和重试单元测试
+    - 测试成功、临时失败、终态失败和最大重试次数
+    - 覆盖设计文档 Test Strategy 的 retry classification
+  - [ ]* 7.5 编写投递属性测试
+    - 属性 P5：任意 HTTP 2xx 响应都会被分类为 successful Delivery Attempt
+    - 属性 P6：任意配置内 transient status 都会触发重试路径
+    - 覆盖 Requirements 4.2、4.3 和 Correctness Properties 的 retry classification 约束
+
+- [x] 8. 实现结构化日志和敏感信息脱敏
+  - [x] 8.1 实现请求生命周期日志
+    - 记录 request identifier、producer identity、event type 和 processing outcome
+    - 确保失败响应和日志使用相同稳定错误码
+    - 覆盖 Requirements 5.1、5.3
+  - [x] 8.2 实现 Delivery Attempt 日志
+    - 记录 request identifier、target identifier、attempt number、status 和 latency
+    - 使用结构化日志作为首版投递记录来源
+    - 覆盖 Requirements 5.2、5.5
+  - [x] 8.3 实现日志脱敏 helper
+    - 脱敏 secret、token、signature 和 authorization header
+    - 覆盖 Correctness Properties: Delivery attempts never log secret values, tokens, signatures, or complete authorization headers
+  - [ ]* 8.4 编写日志和脱敏测试
+    - 测试请求日志字段完整性
+    - 测试投递日志字段完整性
+    - 测试敏感字段不会出现在日志输出中
+    - 覆盖设计文档 Test Strategy 的 stable error codes and redaction
+
+- [x] 9. 检查点 - 确保所有测试通过
+  - 确保所有测试通过,如有疑问请询问用户
+
+- [x] 10. 完成端到端接线和本地开发脚本
+  - [x] 10.1 串联 webhook 入口完整处理链路
+    - 按顺序执行 method check、HMAC 认证、JSON 解析、payload 验证、事件标准化和 Queue 入队
+    - 覆盖 Requirements 1.1、2.1、3.4、4.1、5.4
+  - [x] 10.2 添加本地开发和校验脚本
+    - 添加 typecheck、test、dev 和 deploy 相关 npm scripts
+    - 确保 `wrangler dev` 能加载 Worker 入口和 Queue 配置
+    - 覆盖设计文档 Implementation Plan 1、7
+  - [ ]* 10.3 编写 Worker handler 集成测试
+    - 测试有效 webhook 到 Queue 入队的完整链路
+    - 测试无效签名、非法 JSON 和缺失字段的完整响应
+    - 覆盖设计文档 Test Strategy 的 integration test Worker fetch handler
+
+- [x] 11. 最终检查点 - 确保所有测试通过
+  - 确保所有测试通过,如有疑问请询问用户

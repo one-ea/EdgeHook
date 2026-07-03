@@ -1,0 +1,17 @@
+name = "webhook-worker-channel"
+main = "src/index.ts"
+compatibility_date = "2026-07-02"
+
+[vars]
+DEFAULT_EVENT_TYPE = "webhook.received"
+TARGET_URL = "https://example.com/webhook-target"
+
+[[queues.producers]]
+binding = "WEBHOOK_EVENTS"
+queue = "webhook-events"
+
+[[queues.consumers]]
+queue = "webhook-events"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 5
