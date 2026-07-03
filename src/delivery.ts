@@ -1,4 +1,5 @@
 import type { DeliveryAttempt, DownstreamTarget, Env, NotificationEvent } from "./types";
+import { buildAdapterRequest } from "./adapters/router";
 
 export const DEFAULT_TARGET_ID = "default-http-target";
 export const MAX_DELIVERY_ATTEMPTS = 5;
@@ -17,15 +18,8 @@ export async function deliverNotificationEvent(
 ): Promise<DeliveryResult> {
   const target = getDefaultTarget(env);
   const startedAt = Date.now();
-  const response = await fetch(target.url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Request-Id": event.requestId,
-      "X-Webhook-Event-Id": event.id
-    },
-    body: JSON.stringify(event)
-  });
+  const request = buildAdapterRequest(event, target);
+  const response = await fetch(request);
   const classification = classifyDeliveryResponse(response.status);
 
   return {

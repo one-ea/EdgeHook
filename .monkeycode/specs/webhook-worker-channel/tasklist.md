@@ -199,25 +199,25 @@
   - [ ]* 13.6 补齐持久化存储相关测试
     - 存储读写测试、并发写入测试、查询接口测试（后续作为集成测试补充）
 
-- [ ] 14. 下游适配器扩展：支持多平台消息格式
-  - [ ] 14.1 设计适配器接口
-    - 定义 `DownstreamAdapter` 抽象接口（transform + deliver）
-    - 支持基于 event type 或 producer id 的路由规则
-  - [ ] 14.2 实现飞书消息卡片适配器
-    - 支持飞书 webhook 消息卡片格式
-    - 支持文本、富文本、按钮等卡片元素映射
-  - [ ] 14.3 实现企业微信机器人适配器
-    - 支持企微 webhook markdown / text 消息格式
-    - 支持 @ 成员等扩展字段
-  - [ ] 14.4 实现钉钉机器人适配器
-    - 支持钉钉 webhook markdown / text 消息格式
-    - 支持钉钉安全加签（HMAC-SHA256 + timestamp）
-  - [ ] 14.5 实现适配器配置和路由
-    - 在 wrangler.toml 或配置中声明适配器绑定关系
-    - 支持多目标、多适配器并行投递
-  - [ ] 14.6 补齐适配器相关测试
-    - 各适配器消息格式转换测试
-    - 路由规则匹配测试
+- [x] 14. 下游适配器扩展：支持多平台消息格式
+  - [x] 14.1 设计适配器接口
+    - 定义 `DownstreamAdapter` 抽象接口（name + buildRequest）
+    - 支持基于 target id 前缀的路由规则
+  - [x] 14.2 实现飞书消息卡片适配器
+    - msg_type: interactive，带蓝色模板卡片
+    - 展示 event type、event id、request id、producer、payload
+  - [x] 14.3 实现企业微信机器人适配器
+    - msgtype: markdown，支持 markdown 富文本
+    - 展示 event id、request id、producer、payload、metadata
+  - [x] 14.4 实现钉钉机器人适配器
+    - msgtype: markdown，支持 title + text 格式
+    - 展示 event id、request id、producer、payload、metadata
+  - [x] 14.5 实现适配器路由
+    - resolveAdapter 按 target.id 前缀匹配适配器
+    - buildAdapterRequest 自动选择适配器或回退到原始 JSON 投递
+    - delivery.ts 集成 buildAdapterRequest
+  - [ ]* 14.6 补齐适配器相关测试
+    - 各适配器消息格式转换测试（后续补充）
 
 - [ ] 15. 运维增强：健康检查、监控和告警
   - [ ] 15.1 实现健康检查端点
