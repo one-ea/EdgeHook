@@ -154,3 +154,97 @@
 
 - [x] 11. 最终检查点 - 确保所有测试通过
   - 确保所有测试通过,如有疑问请询问用户
+
+- [x] 12. 测试体系：补齐单元测试、属性测试和集成测试
+  - [x] 12.1 引入 Vitest + @cloudflare/vitest-pool-workers 测试基础设施
+    - 配置 vitest.config.ts，引入 Workers 兼容测试环境
+    - 将 `npm test` 替换为 `vitest run`
+    - 覆盖 task 1.3
+  - [x] 12.2 补齐 auth 模块测试
+    - 覆盖 task 3.4：有效签名、无效签名、过期 timestamp、缺失密钥
+    - 覆盖 task 3.5：属性 P1（raw body 变化改变签名）和 P2（时间窗口外拒绝）
+  - [x] 12.3 补齐 parser / normalizer 测试
+    - 覆盖 task 4.4：合法 JSON、非法 JSON、缺失字段、默认 event type
+    - 覆盖 task 4.5：属性 P3（event id 非空）和 P4（包含 request id）
+  - [x] 12.4 补齐 delivery / 重试测试
+    - 覆盖 task 7.4：success、transient_failure、terminal_failure、max retries
+    - 覆盖 task 7.5：属性 P5（2xx 分类为 success）和 P6（transient 触发重试）
+  - [x] 12.5 补齐 logger 测试
+    - 覆盖 task 8.4：请求日志完整性、投递日志完整性、敏感字段脱敏校验
+  - [x] 12.6 补齐 request / responses / queue 测试
+    - 覆盖 task 2.3：非 POST 返回 405、响应头和响应体包含 request id
+    - 覆盖 task 6.3：合法 webhook 入队成功、missing_binding 和 send_failed
+
+- [ ] 13. 持久化投递记录：引入 D1 或 KV 存储
+  - [ ] 13.1 设计投递记录持久化方案
+    - 二选一：D1（SQL 查询 + 补偿重投）或 KV（简单 key-value + TTL）
+    - 定义 DeliveryRecord schema（eventId、requestId、targetId、attempts、status、createdAt、updatedAt）
+  - [ ] 13.2 实现存储适配层（D1 或 KV）
+    - 创建 delivery_store 模块，封装 create/update/query 接口
+    - 在 wrangler.toml 中声明 binding
+  - [ ] 13.3 将 queue consumer 投递记录写入持久化存储
+    - 每次投递尝试更新 DeliveryRecord
+    - 替代纯日志方案，保留日志作为辅助可观测性
+  - [ ] 13.4 实现投递状态查询接口
+    - GET /delivery/:eventId → 返回投递状态和历次尝试记录
+    - 支持按 requestId 查询关联事件
+  - [ ] 13.5 实现补偿重投机制
+    - 对 terminal_failure 事件支持手动或自动补偿重投
+    - 记录补偿操作审计日志
+  - [ ] 13.6 补齐持久化存储相关测试
+    - 存储读写测试、并发写入测试、查询接口测试
+
+- [ ] 14. 下游适配器扩展：支持多平台消息格式
+  - [ ] 14.1 设计适配器接口
+    - 定义 `DownstreamAdapter` 抽象接口（transform + deliver）
+    - 支持基于 event type 或 producer id 的路由规则
+  - [ ] 14.2 实现飞书消息卡片适配器
+    - 支持飞书 webhook 消息卡片格式
+    - 支持文本、富文本、按钮等卡片元素映射
+  - [ ] 14.3 实现企业微信机器人适配器
+    - 支持企微 webhook markdown / text 消息格式
+    - 支持 @ 成员等扩展字段
+  - [ ] 14.4 实现钉钉机器人适配器
+    - 支持钉钉 webhook markdown / text 消息格式
+    - 支持钉钉安全加签（HMAC-SHA256 + timestamp）
+  - [ ] 14.5 实现适配器配置和路由
+    - 在 wrangler.toml 或配置中声明适配器绑定关系
+    - 支持多目标、多适配器并行投递
+  - [ ] 14.6 补齐适配器相关测试
+    - 各适配器消息格式转换测试
+    - 路由规则匹配测试
+
+- [ ] 15. 运维增强：健康检查、监控和告警
+  - [ ] 15.1 实现健康检查端点
+    - GET /health → 返回 Worker 状态、Queue binding 状态、下游目标连通性
+    - GET /health/ready → Cloudflare Worker readiness check
+  - [ ] 15.2 实现投递成功率监控指标
+    - 通过结构化日志输出 success_rate、transient_rate、terminal_rate
+    - 按 event type、producer id、target id 维度聚合
+  - [ ] 15.3 实现告警集成
+    - 投递 terminal_failure 超过阈值时触发告警日志
+    - Queue 积压超过配置阈值时触发告警日志
+    - 预留 webhook / 邮件告警适配器扩展点
+  - [ ] 15.4 补齐运维相关测试
+    - 健康检查端点测试
+    - 告警阈值触发测试
+
+- [ ] 16. 安全加固：速率限制、IP 白名单和 payload 约束
+  - [ ] 16.1 实现请求速率限制
+    - 基于 producer id 或 IP 做令牌桶 / 滑动窗口限流
+    - 超限返回 HTTP 429 + WEBHOOK_RATE_LIMITED 错误码
+  - [ ] 16.2 实现 IP 白名单
+    - 配置允许的 producer IP 或 CIDR 范围
+    - 非白名单 IP 返回 HTTP 403 + WEBHOOK_FORBIDDEN 错误码
+  - [ ] 16.3 实现 payload 大小限制
+    - 配置最大 payload 字节数
+    - 超限返回 HTTP 413 + WEBHOOK_PAYLOAD_TOO_LARGE 错误码
+  - [ ] 16.4 实现请求头注入防护
+    - 校验签名头中不含换行符等注入字符
+    - 在投递请求头中避免透传生产者原生头
+  - [ ] 16.5 补齐安全相关测试
+    - 限流测试、白名单测试、payload 大小测试
+    - 请求头注入防护测试
+
+- [ ] 17. 最终检查点 - 确保所有测试通过
+  - 确保所有测试通过,如有疑问请询问用户
