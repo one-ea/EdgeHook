@@ -6,6 +6,11 @@ compatibility_date = "2026-07-02"
 DEFAULT_EVENT_TYPE = "webhook.received"
 TARGET_URL = "https://example.com/webhook-target"
 
+[[d1_databases]]
+binding = "DB"
+database_name = "webhook-delivery-db"
+database_id = "placeholder-database-id"
+
 [[queues.producers]]
 binding = "WEBHOOK_EVENTS"
 queue = "webhook-events"

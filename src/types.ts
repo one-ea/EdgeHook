@@ -1,4 +1,5 @@
 export interface Env {
+  DB?: D1Database;
   WEBHOOK_EVENTS: Queue<NotificationEvent>;
   WEBHOOK_SECRET?: string;
   DEFAULT_EVENT_TYPE: string;

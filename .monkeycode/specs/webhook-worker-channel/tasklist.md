@@ -175,24 +175,29 @@
     - 覆盖 task 2.3：非 POST 返回 405、响应头和响应体包含 request id
     - 覆盖 task 6.3：合法 webhook 入队成功、missing_binding 和 send_failed
 
-- [ ] 13. 持久化投递记录：引入 D1 或 KV 存储
-  - [ ] 13.1 设计投递记录持久化方案
-    - 二选一：D1（SQL 查询 + 补偿重投）或 KV（简单 key-value + TTL）
-    - 定义 DeliveryRecord schema（eventId、requestId、targetId、attempts、status、createdAt、updatedAt）
-  - [ ] 13.2 实现存储适配层（D1 或 KV）
-    - 创建 delivery_store 模块，封装 create/update/query 接口
-    - 在 wrangler.toml 中声明 binding
-  - [ ] 13.3 将 queue consumer 投递记录写入持久化存储
-    - 每次投递尝试更新 DeliveryRecord
-    - 替代纯日志方案，保留日志作为辅助可观测性
-  - [ ] 13.4 实现投递状态查询接口
+- [x] 13. 持久化投递记录：引入 D1 存储
+  - [x] 13.1 设计投递记录持久化方案
+    - 选择 D1（SQL 查询 + 补偿重投）而非 KV
+    - 定义 DeliveryRecord schema（event_id、request_id、target_id、event_type、producer_id、attempt_count、status、http_status、latency_ms、payload、attempts_json、created_at、updated_at）
+  - [x] 13.2 实现存储适配层
+    - 创建 `src/delivery_store.ts` 定义 DeliveryRecord / DeliveryAttemptRecord 类型
+    - 创建 `src/delivery_repo.ts` 封装 create/update/get/query 接口
+    - 创建 `migrations/0001_create_delivery_records.sql` DDL
+    - 在 wrangler.toml 中声明 D1 binding
+    - 在 Env 类型中添加 DB?: D1Database
+  - [x] 13.3 将 queue consumer 投递记录写入 D1
+    - 首次投递（attemptNumber === 1）时调用 createDeliveryRecord
+    - 每次投递后调用 updateDeliveryRecord 更新状态和尝试记录
+    - D1 写入失败不影响投递主流程
+  - [x] 13.4 实现投递状态查询接口
     - GET /delivery/:eventId → 返回投递状态和历次尝试记录
-    - 支持按 requestId 查询关联事件
-  - [ ] 13.5 实现补偿重投机制
-    - 对 terminal_failure 事件支持手动或自动补偿重投
-    - 记录补偿操作审计日志
-  - [ ] 13.6 补齐持久化存储相关测试
-    - 存储读写测试、并发写入测试、查询接口测试
+    - GET /delivery/by-request/:requestId → 返回关联事件列表
+    - GET /health → 返回 Queue 和 D1 状态
+  - [x] 13.5 实现补偿重投辅助函数
+    - getFailedDeliveryRecords 按 terminal_failure 状态查询
+    - 预留手动补偿重投扩展点
+  - [ ]* 13.6 补齐持久化存储相关测试
+    - 存储读写测试、并发写入测试、查询接口测试（后续作为集成测试补充）
 
 - [ ] 14. 下游适配器扩展：支持多平台消息格式
   - [ ] 14.1 设计适配器接口
