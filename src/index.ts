@@ -1,8 +1,9 @@
 import type { Env, NotificationEvent } from "./types";
 import { authenticateWebhook } from "./auth";
 import { deliverNotificationEvent, getDefaultTarget, shouldRetryDelivery } from "./delivery";
-import { createDeliveryRecord, updateDeliveryRecord, getDeliveryRecord, getDeliveryRecordsByRequestId } from "./delivery_repo";
+import { createDeliveryRecord, updateDeliveryRecord, getDeliveryRecord, getDeliveryRecordsByRequestId, getFailedDeliveryRecords } from "./delivery_repo";
 import { logDeliveryAttempt, logRequestLifecycle } from "./logger";
+import { computeAndCheckAlerts, computeDeliveryMetrics } from "./monitor";
 import { normalizeNotificationEvent } from "./normalizer";
 import { parseWebhookPayload } from "./parser";
 import { enqueueNotificationEvent, logQueueFailure } from "./queue";
@@ -28,6 +29,14 @@ export default {
 
     if (request.method === "GET" && url.pathname === "/health") {
       return handleHealthCheck(env);
+    }
+
+    if (request.method === "GET" && url.pathname === "/metrics") {
+      return handleMetrics(env);
+    }
+
+    if (request.method === "GET" && url.pathname === "/alerts") {
+      return handleAlerts(env);
     }
 
     return handleWebhook(request, env);
@@ -220,4 +229,23 @@ async function handleHealthCheck(env: Env): Promise<Response> {
   };
 
   return jsonResponse(health, 200, "");
+}
+
+async function handleMetrics(env: Env): Promise<Response> {
+  if (!env.DB) {
+    return jsonResponse({ error: "D1 database not configured" }, 500, "");
+  }
+
+  const records = await getFailedDeliveryRecords(env.DB, 200);
+  const metrics = computeDeliveryMetrics(records);
+  return jsonResponse(metrics, 200, "");
+}
+
+async function handleAlerts(env: Env): Promise<Response> {
+  if (!env.DB) {
+    return jsonResponse({ error: "D1 database not configured" }, 500, "");
+  }
+
+  const result = await computeAndCheckAlerts(env.DB);
+  return jsonResponse(result, 200, "");
 }

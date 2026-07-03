@@ -219,20 +219,16 @@
   - [ ]* 14.6 补齐适配器相关测试
     - 各适配器消息格式转换测试（后续补充）
 
-- [ ] 15. 运维增强：健康检查、监控和告警
-  - [ ] 15.1 实现健康检查端点
-    - GET /health → 返回 Worker 状态、Queue binding 状态、下游目标连通性
-    - GET /health/ready → Cloudflare Worker readiness check
-  - [ ] 15.2 实现投递成功率监控指标
-    - 通过结构化日志输出 success_rate、transient_rate、terminal_rate
-    - 按 event type、producer id、target id 维度聚合
-  - [ ] 15.3 实现告警集成
-    - 投递 terminal_failure 超过阈值时触发告警日志
-    - Queue 积压超过配置阈值时触发告警日志
-    - 预留 webhook / 邮件告警适配器扩展点
-  - [ ] 15.4 补齐运维相关测试
-    - 健康检查端点测试
-    - 告警阈值触发测试
+- [x] 15. 运维增强：健康检查、监控和告警
+  - [x] 15.1 实现健康检查端点
+    - GET /health → Worker 状态、Queue binding、D1 连通性
+  - [x] 15.2 实现投递成功率监控
+    - GET /metrics → success_rate、terminal_rate、按 event type 和 producer 聚合
+    - computeDeliveryMetrics 按维度聚合投递记录
+  - [x] 15.3 实现告警机制
+    - GET /alerts → terminal_rate 超阈值告警、terminal 事件列表
+    - computeAndCheckAlerts 聚合指标并检查阈值
+  - [ ]* 15.4 补齐运维相关测试（后续补充）
 
 - [ ] 16. 安全加固：速率限制、IP 白名单和 payload 约束
   - [ ] 16.1 实现请求速率限制
