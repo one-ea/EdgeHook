@@ -5,108 +5,166 @@
 `src/types.ts` 中的 `Env` 定义 Cloudflare Worker 运行时绑定：
 
 - `WEBHOOK_EVENTS`：Cloudflare Queue producer binding，消息类型为 `NotificationEvent`。
-- `WEBHOOK_SECRET`：可选 webhook HMAC 密钥，后续认证任务会使用。
-- `DEFAULT_EVENT_TYPE`：默认事件类型。
+- `WEBHOOK_SECRET`：可选 webhook HMAC 密钥，通过 `wrangler secret put` 设置。
+- `DEFAULT_EVENT_TYPE`：默认事件类型，`wrangler.toml` 中为 `webhook.received`。
 - `TARGET_URL`：默认下游 HTTP endpoint URL。
 
 ## NotificationEvent
 
 `NotificationEvent` 是 webhook 事件的标准化模型：
 
-- `id`：事件标识。
-- `requestId`：请求标识。
-- `producerId`：生产方标识。
-- `source`：固定为 `webhook`。
-- `type`：事件类型。
-- `payload`：JSON payload。
-- `metadata`：JSON metadata。
-- `receivedAt`：接收时间。
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `id` | `string` | `crypto.randomUUID()` |
+| `requestId` | `string` | 入口生成的 `X-Request-Id` |
+| `producerId` | `string` | 认证阶段的 `X-Webhook-Id` |
+| `source` | `"webhook"` | 固定字面量 |
+| `type` | `string` | payload `type` 或 `DEFAULT_EVENT_TYPE` |
+| `payload` | `JsonObject` | 解析后的原始 JSON object |
+| `metadata` | `JsonObject` | payload `metadata` 或空 object |
+| `receivedAt` | `string` | ISO 8601 时间戳 |
 
 ## DeliveryAttempt
 
 `DeliveryAttempt` 描述一次下游投递尝试：
 
-- `eventId`：关联事件标识。
-- `targetId`：下游目标标识。
-- `attempt`：尝试次数。
-- `status`：`success`、`transient_failure` 或 `terminal_failure`。
-- `httpStatus`：可选 HTTP 状态码。
-- `latencyMs`：投递耗时。
-- `completedAt`：完成时间。
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `eventId` | `string` | 关联事件标识 |
+| `targetId` | `string` | 下游目标标识 |
+| `attempt` | `number` | 尝试次数（从 1 开始） |
+| `status` | `DeliveryStatus` | `success` / `transient_failure` / `terminal_failure` |
+| `httpStatus` | `number?` | 可选 HTTP 状态码 |
+| `latencyMs` | `number` | 投递耗时 |
+| `completedAt` | `string` | 完成时间 |
 
-## HTTP 响应
+## HTTP 接口
 
-当前 `src/responses.ts` 提供 JSON 响应格式，并在响应头加入 `X-Request-Id`。
+### 入口端点
 
-错误响应遵循 `ErrorResponseBody`：
+- 方法：`POST`
+- 请求头：`X-Webhook-Timestamp`、`X-Webhook-Signature`、`X-Webhook-Id`
+- 请求体：JSON object，可选 `type`（string）和 `metadata`（object）
+
+### 成功响应
+
+```json
+HTTP/1.1 202
+Content-Type: application/json; charset=utf-8
+X-Request-Id: <uuid>
+
+{
+  "eventId": "<uuid>",
+  "requestId": "<uuid>"
+}
+```
+
+### 错误响应
+
+统一遵循 `ErrorResponseBody`：
 
 ```json
 {
   "error": {
-    "code": "WEBHOOK_METHOD_NOT_ALLOWED",
-    "message": "The webhook endpoint accepts POST requests only."
+    "code": "WEBHOOK_INVALID_PAYLOAD",
+    "message": "The webhook payload failed validation.",
+    "fields": [
+      { "path": "type", "code": "string_required" }
+    ]
   },
-  "requestId": "request-id"
+  "requestId": "<uuid>"
 }
 ```
 
+### 错误码与状态码
+
+| 错误码 | HTTP 状态 | 触发条件 |
+|--------|-----------|----------|
+| `WEBHOOK_METHOD_NOT_ALLOWED` | 405 | 非 POST 请求 |
+| `WEBHOOK_CONFIG_MISSING` | 500 | secret 或 Queue binding 缺失 |
+| `WEBHOOK_SIGNATURE_EXPIRED` | 401 | timestamp 超过 5 分钟窗口 |
+| `WEBHOOK_INVALID_SIGNATURE` | 401 | 签名错误或签名头缺失 |
+| `WEBHOOK_INVALID_JSON` | 400 | 请求体不是合法 JSON |
+| `WEBHOOK_INVALID_PAYLOAD` | 422 | payload 不是 object 或字段类型错误 |
+| `WEBHOOK_QUEUE_UNAVAILABLE` | 503 | Queue send 失败 |
+
+> `WEBHOOK_UNAUTHORIZED` 和 `WEBHOOK_DELIVERY_FAILED` 已在类型中保留，当前运行路径未使用。
+
+## 下游投递请求
+
+Queue consumer 以 HTTP POST 投递 `NotificationEvent` 到 `TARGET_URL`：
+
+- 方法：`POST`
+- 请求头：
+  - `Content-Type: application/json`
+  - `X-Request-Id: <event.requestId>`
+  - `X-Webhook-Event-Id: <event.id>`
+- 请求体：`NotificationEvent` 的 JSON 序列化
+
+### 下游响应分类
+
+| 下游 HTTP 状态 | 分类 | 后续动作 |
+|----------------|------|----------|
+| `2xx` | `success` | ack |
+| `408` / `429` / `5xx` | `transient_failure` | 5 次内 retry，否则 ack |
+| 其他 | `terminal_failure` | ack |
+
 ## 请求工具
 
-`src/request.ts` 当前导出：
+`src/request.ts` 导出：
 
-- `REQUEST_ID_HEADER`：固定响应头名称 `X-Request-Id`。
-- `ALLOWED_WEBHOOK_METHOD`：固定允许方法 `POST`。
-- `createRequestId()`：生成 request identifier。
-- `isAllowedWebhookMethod(method)`：校验 webhook 请求方法。
+- `REQUEST_ID_HEADER`：`"X-Request-Id"`。
+- `ALLOWED_WEBHOOK_METHOD`：`"POST"`。
+- `createRequestId()`：返回 `crypto.randomUUID()`。
+- `isAllowedWebhookMethod(method)`：校验方法是否为 `POST`。
 
 ## HMAC 认证接口
 
-`src/auth.ts` 当前导出：
+`src/auth.ts` 导出：
 
-- `WEBHOOK_TIMESTAMP_HEADER`：固定为 `X-Webhook-Timestamp`。
-- `WEBHOOK_SIGNATURE_HEADER`：固定为 `X-Webhook-Signature`。
-- `WEBHOOK_ID_HEADER`：固定为 `X-Webhook-Id`。
-- `SIGNATURE_TOLERANCE_SECONDS`：固定为 `300` 秒。
-- `buildSignedPayload(timestamp, rawBody)`：生成签名输入 `timestamp + "." + rawBody`。
-- `authenticateWebhook(request, rawBody, secret, now)`：校验密钥、签名头、时间窗口和 HMAC-SHA256 签名。
+- `WEBHOOK_TIMESTAMP_HEADER`：`"X-Webhook-Timestamp"`。
+- `WEBHOOK_SIGNATURE_HEADER`：`"X-Webhook-Signature"`。
+- `WEBHOOK_ID_HEADER`：`"X-Webhook-Id"`。
+- `SIGNATURE_TOLERANCE_SECONDS`：`300`。
+- `buildSignedPayload(timestamp, rawBody)`：返回 `timestamp + "." + rawBody`。
+- `authenticateWebhook(request, rawBody, secret, now?)`：返回 `AuthenticationResult`。
 
-签名可以使用纯 hex 字符串，也可以使用 `sha256=<hex>` 格式。
+签名支持纯 hex 字符串和 `sha256=<hex>` 格式。
 
 ## Payload Parser
 
-`src/parser.ts` 当前导出：
+`src/parser.ts` 导出：
 
-- `parseWebhookPayload(rawBody)`：将 raw body 解析为 JSON object，并执行 payload 字段验证。
+- `parseWebhookPayload(rawBody)`：解析 raw body 为 JSON object，执行字段验证。
 - `validateWebhookPayload(payload)`：校验 `type` 和 `metadata` 字段类型。
 - `isJsonObject(value)`：判断值是否为 JSON object。
 
 payload 约定：
 
 - 请求体必须是 JSON object。
-- `type` 可选，存在时必须是字符串。
+- `type` 可选，存在时必须是 string。
 - `metadata` 可选，存在时必须是 JSON object。
 
 ## Event Normalizer
 
-`src/normalizer.ts` 当前导出：
+`src/normalizer.ts` 导出：
 
 - `normalizeNotificationEvent(options)`：生成 `NotificationEvent`。
 
 标准化规则：
 
-- `id` 使用 `crypto.randomUUID()` 生成。
-- `source` 固定为 `webhook`。
-- `type` 优先使用 payload 中的字符串 `type`。
-- `type` 缺失时使用 `DEFAULT_EVENT_TYPE`。
-- `metadata` 优先使用 payload 中的 object `metadata`。
-- `metadata` 缺失时使用空 object。
+- `id` 使用 `crypto.randomUUID()`。
+- `source` 固定为 `"webhook"`。
+- `type` 优先使用 payload 中的非空字符串 `type`，否则使用 `DEFAULT_EVENT_TYPE`。
+- `metadata` 优先使用 payload 中的 object `metadata`，否则使用空 object。
+- `receivedAt` 使用 `(options.now || new Date()).toISOString()`。
 
 ## Queue Producer
 
-`src/queue.ts` 当前导出：
+`src/queue.ts` 导出：
 
 - `enqueueNotificationEvent(env, event)`：将 `NotificationEvent` 发送到 `WEBHOOK_EVENTS` Queue。
-- `logQueueFailure(requestId, event)`：记录 Queue send 失败的结构化错误日志。
+- `logQueueFailure(requestId, event?)`：记录 Queue send 失败。
 
 入队结果：
 
@@ -116,39 +174,38 @@ payload 约定：
 
 ## Delivery Orchestrator
 
-`src/delivery.ts` 当前导出：
+`src/delivery.ts` 导出：
 
-- `DEFAULT_TARGET_ID`：默认目标标识 `default-http-target`。
-- `MAX_DELIVERY_ATTEMPTS`：最大投递尝试次数 `5`。
-- `deliverNotificationEvent(env, event, attemptNumber)`：将 `NotificationEvent` 以 HTTP POST JSON body 投递到 `TARGET_URL`。
+- `DEFAULT_TARGET_ID`：`"default-http-target"`。
+- `MAX_DELIVERY_ATTEMPTS`：`5`。
+- `deliverNotificationEvent(env, event, attemptNumber)`：投递 `NotificationEvent` 到 `TARGET_URL`。
 - `getDefaultTarget(env)`：从 `Env` 读取默认下游目标。
-- `classifyDeliveryResponse(status)`：按 HTTP 状态码分类投递结果。
-- `shouldRetryDelivery(classification, attemptNumber)`：判断是否调用 Cloudflare Queue retry。
-- `logDeliveryAttempt(result, requestId)`：输出投递尝试结构化日志。
+- `classifyDeliveryResponse(status)`：按 HTTP 状态码分类。
+- `shouldRetryDelivery(classification, attemptNumber)`：判断是否 retry。
 
 投递分类规则：
 
-- HTTP `2xx`：`success`。
-- HTTP `408`、`429`、`5xx`：`transient_failure`。
-- 其他 HTTP 状态码：`terminal_failure`。
+- HTTP `2xx` → `success`。
+- HTTP `408`、`429`、`5xx` → `transient_failure`。
+- 其他 HTTP 状态码 → `terminal_failure`。
 
 ## Logger
 
-`src/logger.ts` 当前导出：
+`src/logger.ts` 导出：
 
-- `logRequestLifecycle(entry)`：记录 webhook 请求生命周期。
-- `logDeliveryAttempt(attempt, requestId)`：记录一次下游投递尝试。
-- `logQueueFailure(requestId, eventId)`：记录 Queue send 失败。
-- `redactSensitiveFields(value)`：递归脱敏敏感字段。
+- `logRequestLifecycle(entry)`：记录 `webhook_request` 日志。
+- `logDeliveryAttempt(attempt, requestId)`：记录 `delivery_attempt` 日志。
+- `logQueueFailure(requestId, eventId)`：记录 `queue_failure` 日志。
+- `redactSensitiveFields(value)`：递归脱敏。
 
-脱敏字段匹配规则：
+脱敏字段匹配规则（正则，大小写不敏感）：
 
-- 字段名包含 `authorization`。
-- 字段名包含 `secret`。
-- 字段名包含 `signature`。
-- 字段名包含 `token`。
-- 字段名包含 `password`。
-- 字段名包含 `key`。
+- `authorization`
+- `secret`
+- `signature`
+- `token`
+- `password`
+- `key`
 
 ## Wrangler 配置
 
@@ -156,6 +213,16 @@ payload 约定：
 
 - Worker 名称：`webhook-worker-channel`
 - 入口：`src/index.ts`
+- `compatibility_date`：`2026-07-02`
 - 默认变量：`DEFAULT_EVENT_TYPE`、`TARGET_URL`
 - Queue producer：`WEBHOOK_EVENTS` → `webhook-events`
 - Queue consumer：`webhook-events`
+  - `max_batch_size = 10`
+  - `max_batch_timeout = 5`
+  - `max_retries = 5`
+
+## 相关文档
+
+- [Notification Event 模型](./专有概念/notification-event-model.md)
+- [HMAC Webhook 认证](./专有概念/hmac-webhook-authentication.md)
+- [Cloudflare Queue 投递语义](./专有概念/cloudflare-queue-delivery-semantics.md)
