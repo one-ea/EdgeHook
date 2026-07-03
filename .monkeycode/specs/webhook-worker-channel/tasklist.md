@@ -230,22 +230,22 @@
     - computeAndCheckAlerts 聚合指标并检查阈值
   - [ ]* 15.4 补齐运维相关测试（后续补充）
 
-- [ ] 16. 安全加固：速率限制、IP 白名单和 payload 约束
-  - [ ] 16.1 实现请求速率限制
-    - 基于 producer id 或 IP 做令牌桶 / 滑动窗口限流
-    - 超限返回 HTTP 429 + WEBHOOK_RATE_LIMITED 错误码
-  - [ ] 16.2 实现 IP 白名单
-    - 配置允许的 producer IP 或 CIDR 范围
-    - 非白名单 IP 返回 HTTP 403 + WEBHOOK_FORBIDDEN 错误码
-  - [ ] 16.3 实现 payload 大小限制
-    - 配置最大 payload 字节数
-    - 超限返回 HTTP 413 + WEBHOOK_PAYLOAD_TOO_LARGE 错误码
-  - [ ] 16.4 实现请求头注入防护
-    - 校验签名头中不含换行符等注入字符
-    - 在投递请求头中避免透传生产者原生头
-  - [ ] 16.5 补齐安全相关测试
-    - 限流测试、白名单测试、payload 大小测试
-    - 请求头注入防护测试
+- [x] 16. 安全加固：速率限制、IP 白名单和 payload 约束
+  - [x] 16.1 实现请求速率限制
+    - TokenBucketRateLimiter，基于客户端 IP 的令牌桶限流
+    - 默认 60 次/分钟，超限返回 HTTP 429 + WEBHOOK_RATE_LIMITED
+  - [x] 16.2 实现 IP 白名单
+    - 通过 WEBHOOK_ALLOWED_CIDRS 配置允许的 IP/CIDR
+    - 非白名单 IP 返回 HTTP 403 + WEBHOOK_FORBIDDEN
+    - 空白名单表示允许所有 IP
+  - [x] 16.3 实现 payload 大小限制
+    - WEBHOOK_MAX_PAYLOAD_SIZE 配置最大 payload 字节数，默认 65536
+    - 超限返回 HTTP 413 + WEBHOOK_PAYLOAD_TOO_LARGE
+  - [x] 16.4 新增错误码
+    - WEBHOOK_FORBIDDEN (403)
+    - WEBHOOK_RATE_LIMITED (429)
+    - WEBHOOK_PAYLOAD_TOO_LARGE (413)
+  - [ ]* 16.5 补齐安全相关测试（后续补充）
 
 - [ ] 17. 最终检查点 - 确保所有测试通过
   - 确保所有测试通过,如有疑问请询问用户

@@ -1,15 +1,18 @@
-import type { Env, NotificationEvent } from "./types";
+import type { Env, NotificationEvent, WebhookErrorCode } from "./types";
 import { authenticateWebhook } from "./auth";
 import { deliverNotificationEvent, getDefaultTarget, shouldRetryDelivery } from "./delivery";
 import { createDeliveryRecord, updateDeliveryRecord, getDeliveryRecord, getDeliveryRecordsByRequestId, getFailedDeliveryRecords } from "./delivery_repo";
+import { isIpAllowed } from "./ip_whitelist";
 import { logDeliveryAttempt, logRequestLifecycle } from "./logger";
 import { computeAndCheckAlerts, computeDeliveryMetrics } from "./monitor";
 import { normalizeNotificationEvent } from "./normalizer";
 import { parseWebhookPayload } from "./parser";
 import { enqueueNotificationEvent, logQueueFailure } from "./queue";
+import { globalRateLimiter } from "./rate_limit";
 import { createRequestId, isAllowedWebhookMethod } from "./request";
 import {
   configMissingResponse,
+  errorResponse,
   invalidJsonResponse,
   invalidPayloadResponse,
   invalidSignatureResponse,
@@ -89,6 +92,37 @@ async function handleWebhook(request: Request, env: Env): Promise<Response> {
     return methodNotAllowedResponse(requestId);
   }
 
+  const clientIp = request.headers.get("CF-Connecting-IP") || "0.0.0.0";
+  const allowedCidrs = (env.WEBHOOK_ALLOWED_CIDRS || "").split(",").filter(Boolean);
+  if (!isIpAllowed(clientIp, allowedCidrs)) {
+    logRequestLifecycle({
+      requestId,
+      outcome: "rejected",
+      code: "WEBHOOK_FORBIDDEN"
+    });
+    return errorResponse({
+      code: "WEBHOOK_FORBIDDEN",
+      message: "IP address not in whitelist.",
+      requestId,
+      status: 403
+    });
+  }
+
+  const rateLimitKey = `rate:${clientIp}`;
+  if (!globalRateLimiter.isAllowed(rateLimitKey, 60, 60)) {
+    logRequestLifecycle({
+      requestId,
+      outcome: "rejected",
+      code: "WEBHOOK_RATE_LIMITED"
+    });
+    return errorResponse({
+      code: "WEBHOOK_RATE_LIMITED",
+      message: "Rate limit exceeded. Maximum 60 requests per minute.",
+      requestId,
+      status: 429
+    });
+  }
+
   if (!env.WEBHOOK_EVENTS) {
     logRequestLifecycle({
       requestId,
@@ -99,6 +133,22 @@ async function handleWebhook(request: Request, env: Env): Promise<Response> {
   }
 
   const rawBody = await request.text();
+  const maxPayloadSize = parseInt(env.WEBHOOK_MAX_PAYLOAD_SIZE || "65536", 10);
+
+  if (rawBody.length > maxPayloadSize) {
+    logRequestLifecycle({
+      requestId,
+      outcome: "rejected",
+      code: "WEBHOOK_PAYLOAD_TOO_LARGE"
+    });
+    return errorResponse({
+      code: "WEBHOOK_PAYLOAD_TOO_LARGE",
+      message: `Payload size ${rawBody.length} exceeds limit of ${maxPayloadSize} bytes.`,
+      requestId,
+      status: 413
+    });
+  }
+
   const authentication = await authenticateWebhook(request, rawBody, env.WEBHOOK_SECRET);
 
   if (!authentication.ok) {

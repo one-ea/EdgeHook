@@ -2,6 +2,8 @@ export interface Env {
   DB?: D1Database;
   WEBHOOK_EVENTS: Queue<NotificationEvent>;
   WEBHOOK_SECRET?: string;
+  WEBHOOK_ALLOWED_CIDRS?: string;
+  WEBHOOK_MAX_PAYLOAD_SIZE?: string;
   DEFAULT_EVENT_TYPE: string;
   TARGET_URL: string;
 }
@@ -64,7 +66,10 @@ export type WebhookErrorCode =
   | "WEBHOOK_INVALID_PAYLOAD"
   | "WEBHOOK_CONFIG_MISSING"
   | "WEBHOOK_QUEUE_UNAVAILABLE"
-  | "WEBHOOK_DELIVERY_FAILED";
+  | "WEBHOOK_DELIVERY_FAILED"
+  | "WEBHOOK_FORBIDDEN"
+  | "WEBHOOK_RATE_LIMITED"
+  | "WEBHOOK_PAYLOAD_TOO_LARGE";
 
 export interface QueueMessageBody {
   event: NotificationEvent;
